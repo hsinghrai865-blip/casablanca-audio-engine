@@ -1,8 +1,5 @@
 fastapi
-uvicorn
-pydantic
-httpx
-librosa
-numpy
-soundfile
+uvicorn[standard]
 python-multipart
+essentia
+numpy
