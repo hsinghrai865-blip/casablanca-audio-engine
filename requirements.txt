@@ -1,1 +1,8 @@
-
+fastapi
+uvicorn
+pydantic
+httpx
+librosa
+numpy
+soundfile
+python-multipart
