@@ -7,6 +7,7 @@ import os
 import subprocess
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,18 +15,26 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
-    # Save uploaded file to temp
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or ".mp3")[1]) as tmp:
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=os.path.splitext(file.filename or ".mp3")[1]
+    ) as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
-    try:
-        # Convert uploaded file to wav first
-        wav_path = tmp_path + ".wav"
+    wav_path = tmp_path + ".wav"
 
+    try:
+        # Convert uploaded audio to mono WAV first
         subprocess.run(
             [
                 "ffmpeg",
@@ -40,38 +49,49 @@ async def analyze(file: UploadFile = File(...)):
             stderr=subprocess.PIPE,
         )
 
-        # Load converted wav with Essentia
+        # Load WAV with Essentia
         audio = es.MonoLoader(filename=wav_path, sampleRate=44100)()
 
         # --- Pitch Analysis ---
         pitch_extractor = es.PredominantPitchMelodia()
         pitch_values, pitch_confidence = pitch_extractor(audio)
         valid_pitches = pitch_values[pitch_values > 0]
-        vocal_confidence = float(np.mean(pitch_confidence[pitch_values > 0]) * 100) if len(valid_pitches) > 0 else 0
 
-        # Pitch accuracy = how stable the pitch is (lower std = more accurate)
+        if len(valid_pitches) > 0:
+            vocal_confidence = float(
+                np.mean(pitch_confidence[pitch_values > 0]) * 100
+            )
+        else:
+            vocal_confidence = 0.0
+
+        # Pitch accuracy = how stable the pitch is
         if len(valid_pitches) > 1:
             pitch_std = float(np.std(valid_pitches))
             pitch_accuracy = max(0, min(100, 100 - (pitch_std / 5)))
         else:
-            pitch_accuracy = 0
+            pitch_accuracy = 0.0
 
         # --- Rhythm / Tempo ---
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
         bpm, beats, beats_confidence, _, _ = rhythm_extractor(audio)
         tempo_bpm = float(bpm)
 
-        # Timing accuracy from beat intervals regularity
+        # Timing accuracy from beat interval regularity
         if len(beats) > 2:
             intervals = np.diff(beats)
             timing_std = float(np.std(intervals))
             median_interval = float(np.median(intervals))
-            timing_accuracy = max(0, min(100, 100 - (timing_std / median_interval * 100))) if median_interval > 0 else 0
+            if median_interval > 0:
+                timing_accuracy = max(
+                    0,
+                    min(100, 100 - (timing_std / median_interval * 100))
+                )
+            else:
+                timing_accuracy = 0.0
         else:
-            timing_accuracy = 50
+            timing_accuracy = 50.0
 
         # --- Energy ---
-        energy = es.Energy()(audio)
         rms = es.RMS()(audio)
         energy_score = float(min(10, rms * 100))
 
@@ -86,24 +106,26 @@ async def analyze(file: UploadFile = File(...)):
 
         # --- Onset Strength ---
         onsets = es.OnsetRate()(audio)
-        onset_rate = float(onsets[1]) if len(onsets) > 1 else 0
+        onset_rate = float(onsets[1]) if len(onsets) > 1 else 0.0
         onset_strength = float(min(100, onset_rate * 10))
 
         # --- Overall Score ---
         overall_score = round(
             (
                 pitch_accuracy * 0.25
-                + timing_accuracy * 0.2
-                + vocal_confidence * 0.2
-                + spectral_brightness * 0.1
-                + energy_score * 10 * 0.1
-                + dynamic_range * 0.1
+                + timing_accuracy * 0.20
+                + vocal_confidence * 0.20
+                + spectral_brightness * 0.10
+                + energy_score * 10 * 0.10
+                + dynamic_range * 0.10
                 + onset_strength * 0.05
             ),
             1
         )
 
         return {
+            "status": "complete",
+            "analysis_engine": "Essentia",
             "pitch_accuracy": round(pitch_accuracy, 1),
             "timing_accuracy": round(timing_accuracy, 1),
             "tempo_bpm": round(tempo_bpm, 1),
@@ -119,12 +141,26 @@ async def analyze(file: UploadFile = File(...)):
             "tone_quality": round(energy_score * 10, 1),
         }
 
+    except subprocess.CalledProcessError as e:
+        return {
+            "status": "error",
+            "stage": "ffmpeg_conversion",
+            "error": e.stderr.decode("utf-8", errors="ignore")
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "stage": "analysis",
+            "error": str(e)
+        }
+
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
-        wav_path = tmp_path + ".wav"
         if os.path.exists(wav_path):
             os.unlink(wav_path)
+
 
 if __name__ == "__main__":
     import uvicorn
