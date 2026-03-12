@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     libavformat-dev \
     libavutil-dev \
     libswresample-dev \
+    libavcodec-extra \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
