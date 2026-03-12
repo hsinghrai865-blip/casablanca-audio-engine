@@ -4,6 +4,7 @@ import essentia.standard as es
 import numpy as np
 import tempfile
 import os
+import subprocess
 
 app = FastAPI()
 app.add_middleware(
@@ -22,8 +23,25 @@ async def analyze(file: UploadFile = File(...)):
         tmp_path = tmp.name
 
     try:
-        # Load audio with Essentia
-        audio = es.MonoLoader(filename=tmp_path, sampleRate=44100)()
+        # Convert uploaded file to wav first
+        wav_path = tmp_path + ".wav"
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", tmp_path,
+                "-ac", "1",
+                "-ar", "44100",
+                wav_path
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Load converted wav with Essentia
+        audio = es.MonoLoader(filename=wav_path, sampleRate=44100)()
 
         # --- Pitch Analysis ---
         pitch_extractor = es.PredominantPitchMelodia()
@@ -102,7 +120,11 @@ async def analyze(file: UploadFile = File(...)):
         }
 
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        wav_path = tmp_path + ".wav"
+        if os.path.exists(wav_path):
+            os.unlink(wav_path)
 
 if __name__ == "__main__":
     import uvicorn
