@@ -1,5 +1,5 @@
 fastapi
-uvicorn[standard]
-python-multipart
+uvicorn
+numpy<2
 essentia
-numpy
+python-multipart
